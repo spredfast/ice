@@ -17,6 +17,7 @@
  */
 package com.netflix.ice.basic;
 
+import com.amazonaws.services.devicefarm.model.OfferingType;
 import com.amazonaws.services.ec2.AmazonEC2Client;
 import com.amazonaws.services.ec2.model.*;
 import com.google.common.collect.Lists;
@@ -139,7 +140,16 @@ public class BasicReservationService extends Poller implements ReservationServic
         long currentTime = new DateMidnight().getMillis();
 
         DescribeReservedInstancesOfferingsRequest req =  new DescribeReservedInstancesOfferingsRequest()
-                .withFilters(new com.amazonaws.services.ec2.model.Filter().withName("marketplace").withValues("false"));
+                .withIncludeMarketplace(false)
+                .withInstanceTenancy(Tenancy.Default)
+                .withOfferingClass(OfferingClassType.Standard)
+                .withOfferingType(OfferingTypeValues.PartialUpfront)
+                .withProductDescription(RIProductDescription.LinuxUNIXAmazonVPC)
+                .withFilters(new Filter().withName("scope").withValues("Region"));
+
+        req = this.term == Ec2InstanceReservationPrice.ReservationPeriod.threeyear ?
+                req.withMinDuration(new Long(366 * 3600 * 24)) : req.withMaxDuration(new Long(366 * 3600 * 24));
+
         String token = null;
         boolean hasNewPrice = false;
         AmazonEC2Client ec2Client = new AmazonEC2Client(AwsUtils.awsCredentialsProvider, AwsUtils.clientConfig);
@@ -153,13 +163,7 @@ public class BasicReservationService extends Poller implements ReservationServic
                 token = offers.getNextToken();
 
                 for (ReservedInstancesOffering offer: offers.getReservedInstancesOfferings()) {
-                    if (offer.getProductDescription().indexOf("Amazon VPC") >= 0)
-                        continue;
                     ReservationUtilization utilization = ReservationUtilization.get(offer.getOfferingType());
-                    Ec2InstanceReservationPrice.ReservationPeriod term = offer.getDuration() / 24 / 3600 > 366 ?
-                            Ec2InstanceReservationPrice.ReservationPeriod.threeyear : Ec2InstanceReservationPrice.ReservationPeriod.oneyear;
-                    if (term != this.term)
-                        continue;
 
                     double hourly = offer.getUsagePrice();
                     if (hourly <= 0) {
@@ -171,15 +175,11 @@ public class BasicReservationService extends Poller implements ReservationServic
                         }
                     }
                     UsageType usageType = getUsageType(offer.getInstanceType(), offer.getProductDescription());
-                    // Unknown Zone
-                    if (Zone.getZone(offer.getAvailabilityZone()) == null) {
-                        logger.error("No Zone for " + offer.getAvailabilityZone());
-                    } else {
-                        hasNewPrice = setPrice(utilization, currentTime, Zone.getZone(offer.getAvailabilityZone()).region, usageType,
-                                offer.getFixedPrice(), hourly) || hasNewPrice;
 
-                        logger.info("Setting RI price for " + Zone.getZone(offer.getAvailabilityZone()).region + " " + utilization + " " + usageType + " " + offer.getFixedPrice() + " " + hourly);
-                    }
+                    hasNewPrice = setPrice(utilization, currentTime, region, usageType,
+                            offer.getFixedPrice(), hourly) || hasNewPrice;
+
+                    logger.info("Setting RI price for " + region + " " + utilization + " " + usageType + " " + offer.getFixedPrice() + " " + hourly);
                 }
             } while (!StringUtils.isEmpty(token));
         }
@@ -410,6 +410,9 @@ public class BasicReservationService extends Poller implements ReservationServic
         for (String key: reservationsFromApi.keySet()) {
             ReservedInstances reservedInstances = reservationsFromApi.get(key);
             if (reservedInstances.getInstanceCount() <= 0)
+                continue;
+
+            if (reservedInstances.getAvailabilityZone() == null)
                 continue;
 
             String accountId = key.substring(0, key.indexOf(","));

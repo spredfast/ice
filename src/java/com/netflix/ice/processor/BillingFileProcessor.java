@@ -344,6 +344,9 @@ public class BillingFileProcessor extends Poller {
                 double reservedUsed = Math.min(value, reservation.capacity);
                 double reservedUnused = reservation.capacity - reservedUsed;
                 double bonusReserved = value > reservation.capacity ? value - reservation.capacity : 0;
+                double withRegionalUsage = bonusReserved + reservation.capacity;
+
+                if (bonusReserved > 0 && reservation.capacity > 0)
 
                 if (reservedUsed > 0 || existing != null) {
                     usageMap.put(tagGroup, reservedUsed);
@@ -362,9 +365,10 @@ public class BillingFileProcessor extends Poller {
                     costMap.put(bonusTagGroup, bonusReserved * reservation.reservationHourlyCost);
                 }
 
-                if (reservation.capacity > 0) {
+
+                if (withRegionalUsage > 0) {
                     TagGroup upfrontTagGroup = new TagGroup(tagGroup.account, tagGroup.region, tagGroup.zone, tagGroup.product, Operation.getUpfrontAmortized(utilization), tagGroup.usageType, null);
-                    costMap.put(upfrontTagGroup, reservation.capacity * reservation.upfrontAmortized);
+                    costMap.put(upfrontTagGroup, withRegionalUsage * reservation.upfrontAmortized);
                 }
             }
 
